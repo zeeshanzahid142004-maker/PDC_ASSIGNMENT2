@@ -24,7 +24,7 @@ int main(int argc, char * argv[]) {
   int N = 16;
   bool printLog = false;
 
-  // parse commandline options ////////////////////////////////////////////
+ 
   int opt;
   static struct option long_options[] = {
     {"size", 1, 0, 's'},
@@ -195,16 +195,16 @@ void absVector(float* values, float* output, int N) {
     maskIsNegative = _cs149_init_ones(0);
 
     // Load vector of values from contiguous memory addresses
-    _cs149_vload_float(x, values+i, maskAll);               // x = values[i];
+    _cs149_vload_float(x, values+i, maskAll);                // x = values[i];
 
     // Set mask according to predicate
-    _cs149_vlt_float(maskIsNegative, x, zero, maskAll);     // if (x < 0) {
+    _cs149_vlt_float(maskIsNegative, x, zero, maskAll);      // if (x < 0) {
 
     // Execute instruction using mask ("if" clause)
     _cs149_vsub_float(result, zero, x, maskIsNegative);      //   output[i] = -x;
 
     // Inverse maskIsNegative to generate "else" mask
-    maskIsNotNegative = _cs149_mask_not(maskIsNegative);     // } else {
+    maskIsNotNegative = _cs149_mask_not(maskIsNegative);      // } else {
 
     // Execute instruction ("else" clause)
     _cs149_vload_float(result, values+i, maskIsNotNegative); //   output[i] = x; }
@@ -241,15 +241,44 @@ void clampedExpSerial(float* values, int* exponents, float* output, int N) {
 }
 
 void clampedExpVector(float* values, int* exponents, float* output, int N) {
+  __cs149_vec_float x;
+  __cs149_vec_int y;
+  __cs149_vec_float result;
+  __cs149_vec_int zero = _cs149_vset_int(0);
+  __cs149_vec_int one = _cs149_vset_int(1);
+  __cs149_vec_float max_val = _cs149_vset_float(9.999999f);
 
-  //
-  // CS149 STUDENTS TODO: Implement your vectorized version of
-  // clampedExpSerial() here.
-  //
-  // Your solution should work for any value of
-  // N and VECTOR_WIDTH, not just when VECTOR_WIDTH divides N
-  //
-  
+  for (int i = 0; i < N; i += VECTOR_WIDTH) {
+    // Determine how many lanes are actually valid for this chunk
+    int validLanes = (N - i > VECTOR_WIDTH) ? VECTOR_WIDTH : (N - i);
+    __cs149_mask maskAll = _cs149_init_ones(validLanes);
+
+    // Load elements
+    _cs149_vload_float(x, values + i, maskAll);
+    _cs149_vload_int(y, exponents + i, maskAll);
+
+    // Initialize the result to 1.0f
+    result = _cs149_vset_float(1.0f);
+
+    // Identify which lanes have an exponent > 0
+    __cs149_mask maskActive;
+    _cs149_vgt_int(maskActive, y, zero, maskAll);
+
+    // Loop until all active lanes have finished counting down their exponent
+    while (_cs149_cntbits(maskActive) > 0) {
+      _cs149_vmult_float(result, result, x, maskActive);
+      _cs149_vsub_int(y, y, one, maskActive);
+      _cs149_vgt_int(maskActive, y, zero, maskAll);
+    }
+
+    // Clamp values that exceed the maximum threshold
+    __cs149_mask maskClamp;
+    _cs149_vgt_float(maskClamp, result, max_val, maskAll);
+    _cs149_vmove_float(result, max_val, maskClamp);
+
+    // Store the processed vector block back to memory
+    _cs149_vstore_float(output + i, result, maskAll);
+  }
 }
 
 // returns the sum of all elements in values
@@ -262,19 +291,27 @@ float arraySumSerial(float* values, int N) {
   return sum;
 }
 
-// returns the sum of all elements in values
-// You can assume N is a multiple of VECTOR_WIDTH
-// You can assume VECTOR_WIDTH is a power of 2
+ 
 float arraySumVector(float* values, int N) {
-  
-  //
-  // CS149 STUDENTS TODO: Implement your vectorized version of arraySumSerial here
-  //
-  
-  for (int i=0; i<N; i+=VECTOR_WIDTH) {
+  __cs149_vec_float vecSum = _cs149_vset_float(0.0f);
+  __cs149_vec_float vecLoad;
+  __cs149_mask maskAll = _cs149_init_ones();
 
+  // Accumulate the entire array down into a single vector
+  for (int i = 0; i < N; i += VECTOR_WIDTH) {
+    _cs149_vload_float(vecLoad, values + i, maskAll);
+    _cs149_vadd_float(vecSum, vecSum, vecLoad, maskAll);
   }
 
-  return 0.0;
-}
+  // Reduce the accumulated vector into a single value using log2(W) steps
+  for (int i = 1; i < VECTOR_WIDTH; i *= 2) {
+    _cs149_hadd_float(vecSum, vecSum);
+    _cs149_interleave_float(vecSum, vecSum);
+  }
 
+  // Extract the reduced scalar sum from the first lane
+  float resultArr[VECTOR_WIDTH];
+  _cs149_vstore_float(resultArr, vecSum, maskAll);
+  
+  return resultArr[0];
+}
