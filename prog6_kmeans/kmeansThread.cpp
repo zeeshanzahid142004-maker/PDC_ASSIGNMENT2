@@ -196,6 +196,9 @@ void kMeansThread(double *data, double *clusterCentroids, int *clusterAssignment
   }
 
   /* Main K-Means Algorithm Loop */
+ double hotspotTime = 0.0; 
+
+  /* Main K-Means Algorithm Loop */
   int iter = 0;
   while (!stoppingConditionMet(prevCost, currCost, epsilon, K)) {
     // Update cost arrays (for checking convergence criteria)
@@ -207,13 +210,29 @@ void kMeansThread(double *data, double *clusterCentroids, int *clusterAssignment
     args.start = 0;
     args.end = K;
 
+    // 2. WRAP THE ASSIGNMENT FUNCTION WITH THE TIMER
+    double start = CycleTimer::currentSeconds();
     computeAssignments(&args);
+    double end = CycleTimer::currentSeconds();
+    hotspotTime += (end - start);
+
     computeCentroids(&args);
     computeCost(&args);
 
     iter++;
   }
 
+    // Setup args struct
+    args.start = 0;
+    args.end = K;
+
+    computeAssignments(&args);
+    computeCentroids(&args);
+    computeCost(&args);
+
+    iter++;
+  
+printf("Total Hotspot Time: %.3f ms\n", hotspotTime * 1000);
   delete[] currCost;
   delete[] prevCost;
 }
